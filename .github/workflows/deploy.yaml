@@ -44,28 +44,31 @@ jobs:
                       if [ ! -d ".git" ]; then
                         echo "Repo not found in $APP_DIR. Run the bootstrap clone first."; exit 1
                       fi
-
-                      git fetch --all --prune
-                      git checkout "$BRANCH"
-                      git reset --hard "origin/$BRANCH"
-                      git clean -fdx -e ".env" || true
-
-                      if [ ! -d ".venv" ]; then
-                        ${PY} -m venv .venv
-                      fi
-                      . .venv/bin/activate
-                      python -m pip install --upgrade pip
-                      [ -f requirements.txt ] && pip install -r requirements.txt
-
-                      # load env if present
-                      if [ -f .env ]; then
-                        set -o allexport; . ./.env; set +o allexport
-                      fi
-
                       python manage.py migrate --noinput
                       python manage.py collectstatic --noinput || true
 
-                      sudo systemctl daemon-reload
-                      sudo systemctl restart "$SERVICE"
-                      sudo systemctl status "$SERVICE" --no-pager || true
-                      sudo journalctl -u "$SERVICE" --since "-5 min" --no-pager -n 200 || true
+                      python manage.py runserver
+
+                    #   git fetch --all --prune
+                    #   git checkout "$BRANCH"
+                    #   git reset --hard "origin/$BRANCH"
+                    #   git clean -fdx -e ".env" || true
+
+                    #   if [ ! -d ".venv" ]; then
+                    #     ${PY} -m venv .venv
+                    #   fi
+                    #   . .venv/bin/activate
+                    #   python -m pip install --upgrade pip
+                    #   [ -f requirements.txt ] && pip install -r requirements.txt
+
+                    #   # load env if present
+                    #   if [ -f .env ]; then
+                    #     set -o allexport; . ./.env; set +o allexport
+                    #   fi
+
+                      
+
+                    #   sudo systemctl daemon-reload
+                    #   sudo systemctl restart "$SERVICE"
+                    #   sudo systemctl status "$SERVICE" --no-pager || true
+                    #   sudo journalctl -u "$SERVICE" --since "-5 min" --no-pager -n 200 || true
