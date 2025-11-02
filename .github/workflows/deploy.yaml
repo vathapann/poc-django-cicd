@@ -3,7 +3,6 @@ name: CI/CD - Django (server-side git pull)
 on:
     push:
         branches: ["ci/cd"]
-
 jobs:
     deploy:
         runs-on: ubuntu-latest
