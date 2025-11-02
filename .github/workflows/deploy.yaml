@@ -3,91 +3,70 @@ name: CI/CD - Django (server-side git pull)
 on:
     push:
         branches: ["ci/cd"]
+
 jobs:
     deploy:
         runs-on: ubuntu-latest
-
         steps:
             - name: Checkout (CI runner only; not used for copy)
               uses: actions/checkout@v4
 
-            - name: Sanity-check SSH key & connectivity
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  if [ -z "${{ secrets.DROPLET_SSH_KEY }}" ]; then
-                  echo "❌ DROPLET_SSH_KEY is empty"; exit 1
-                  fi
+            # sanity check is optional; you already proved SSH works
+            # - name: Sanity-check SSH key & connectivity
+            #   run: |
+            #     echo "${{ secrets.DROPLET_SSH_KEY }}" > key.pem
+            #     chmod 600 key.pem
+            #     ssh -o StrictHostKeyChecking=no -i key.pem ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_IP }} "echo ✅ SSH OK"
 
-                  # Write key to a file exactly as provided
-                  echo "${{ secrets.DROPLET_SSH_KEY }}" > key.pem
-                  # Basic validation
-                  head -n1 key.pem | grep -q "BEGIN OPENSSH PRIVATE KEY" || { echo "❌ Not an OpenSSH private key"; exit 1; }
-                  chmod 600 key.pem
-
-                  # Try raw ssh (no host key checking for test)
-                  ssh -o StrictHostKeyChecking=no -i key.pem ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_IP }} "echo ✅ SSH OK"
-            
             - name: Remote deploy via SSH (git pull + restart)
               uses: appleboy/ssh-action@v1.2.0
               with:
                   host: ${{ secrets.DROPLET_IP }}
                   username: ${{ secrets.DROPLET_USER }}
                   key: ${{ secrets.DROPLET_SSH_KEY }}
+                  command_timeout: 20m
                   script: |
                       set -euo pipefail
 
                       APP_DIR="${{ secrets.APP_DIR }}"
                       BRANCH="${{ secrets.DEPLOY_BRANCH || 'ci/cd' }}"
-                      SERVICE="${{ secrets.SYSTEMD_SERVICE }}"         # e.g. mydjango.service
-                      PY="${{ secrets.PYTHON_BIN || 'python3' }}"      # default to python3
+                      SERVICE="${{ secrets.SYSTEMD_SERVICE }}"
+                      PY="${{ secrets.PYTHON_BIN || 'python3' }}"
 
                       echo "APP_DIR: ${APP_DIR}"
                       echo "BRANCH: ${BRANCH}"
-                      echo "KEY: ${DROPLET_SSH_KEY}"
-                      # Do NOT echo private keys or other secrets.
 
-                      # Ensure app dir exists
                       mkdir -p "$APP_DIR"
                       cd "$APP_DIR"
 
-                      # Trust GitHub host key (idempotent)
+                      # trust GitHub host key (idempotent)
                       ssh-keyscan -t rsa,ed25519 github.com | sudo tee -a /etc/ssh/ssh_known_hosts > /dev/null
 
-                      # Ensure repo exists
                       if [ ! -d ".git" ]; then
-                        echo "Repo not found in $APP_DIR. Did you run the bootstrap clone on the server?"
-                        exit 1
+                        echo "Repo not found in $APP_DIR. Run the bootstrap clone first."; exit 1
                       fi
 
-                      # Pull latest code
                       git fetch --all --prune
                       git checkout "$BRANCH"
                       git reset --hard "origin/$BRANCH"
                       git clean -fdx -e ".env" || true
 
-                      # Python venv
                       if [ ! -d ".venv" ]; then
                         ${PY} -m venv .venv
                       fi
                       . .venv/bin/activate
                       python -m pip install --upgrade pip
-                      if [ -f requirements.txt ]; then
-                        pip install -r requirements.txt
-                      fi
+                      [ -f requirements.txt ] && pip install -r requirements.txt
 
-                      # Load env if present
+                      # load env if present
                       if [ -f .env ]; then
-                        set -o allexport
-                        . ./.env
-                        set +o allexport
+                        set -o allexport; . ./.env; set +o allexport
                       fi
 
-                      # Django maintenance
                       python manage.py migrate --noinput
                       python manage.py collectstatic --noinput || true
 
-                      # Restart app (systemd)
                       sudo systemctl daemon-reload
                       sudo systemctl restart "$SERVICE"
                       sudo systemctl status "$SERVICE" --no-pager || true
+                      sudo journalctl -u "$SERVICE" --since "-5 min" --no-pager -n 200 || true
