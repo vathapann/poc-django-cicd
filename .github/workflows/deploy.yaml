@@ -47,7 +47,7 @@ jobs:
                       python manage.py migrate --noinput
                       python manage.py collectstatic --noinput || true
 
-                      python manage.py runserver
+                      python manage.py runserver 0.0.0.0 8081
 
                     #   git fetch --all --prune
                     #   git checkout "$BRANCH"
