@@ -1,0 +1,71 @@
+name: CI/CD - Django (server-side git pull)
+
+on:
+    push:
+        branches: ["ci/cd"] # deploy when ci/cd branch gets new commits
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout (CI runner only; not used for copy)
+              uses: actions/checkout@v4
+
+            - name: Remote deploy via SSH (git pull + restart)
+              uses: appleboy/ssh-action@v1.2.0
+              with:
+                  host: ${{ secrets.DROPLET_IP }}
+                  username: ${{ secrets.DROPLET_USER }}
+                  key: ${{ secrets.DROPLET_SSH_KEY }}
+                  script: |
+                      set -euo pipefail
+
+                      APP_DIR="${{ secrets.APP_DIR }}"
+                      BRANCH="${{ secrets.DEPLOY_BRANCH || 'ci/cd' }}"
+
+                      # Ensure app dir exists
+                      mkdir -p "$APP_DIR"
+                      cd "$APP_DIR"
+
+                      # Make sure github.com is trusted (idempotent)
+                      ssh-keyscan -t rsa,ed25519 github.com | sudo tee -a /etc/ssh/ssh_known_hosts >/dev/null
+
+                      # Ensure repo exists and has correct origin
+                      if [ ! -d ".git" ]; then
+                        echo "Repo not found. Did you run the bootstrap clone? Aborting."
+                        exit 1
+                      fi
+
+                      # Clean local changes to avoid merge issues (keep .env)
+                      git fetch --all --prune
+                      git checkout "$BRANCH"
+                      # if you keep local files like .env, exclude them from reset
+                      git reset --hard "origin/$BRANCH"
+                      git clean -fdx -e ".env" || true
+
+                      # Python venv
+                      if [ ! -d ".venv" ]; then
+                        ${PY} -m venv .venv
+                      fi
+                      . .venv/bin/activate
+                      python -m pip install --upgrade pip
+                      if [ -f requirements.txt ]; then
+                        pip install -r requirements.txt
+                      fi
+
+                      # Load env if present
+                      if [ -f .env ]; then
+                        set -o allexport
+                        . ./.env
+                        set +o allexport
+                      fi
+
+                      # Django tasks
+                      python manage.py migrate --noinput
+                      python manage.py collectstatic --noinput || true
+
+                    #   # Restart service
+                    #   sudo systemctl daemon-reload
+                    #   sudo systemctl restart "$SERVICE"
+                    #   sudo systemctl status "$SERVICE" --no-pager || true
