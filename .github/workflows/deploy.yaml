@@ -1,77 +1,94 @@
 name: CI/CD - Django (server-side git pull)
 
 on:
-  push:
-    branches: ["ci/cd"]
+    push:
+        branches: ["ci/cd"]
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+    deploy:
+        runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout (CI runner only; not used for copy)
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout (CI runner only; not used for copy)
+              uses: actions/checkout@v4
 
-      - name: Remote deploy via SSH (git pull + restart)
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DROPLET_IP }}
-          username: ${{ secrets.DROPLET_USER }}
-          key: ${{ secrets.DROPLET_SSH_KEY }}
-          script: |
-            set -euo pipefail
+            - name: Sanity-check SSH key & connectivity
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  if [ -z "${{ secrets.DROPLET_SSH_KEY }}" ]; then
+                  echo "❌ DROPLET_SSH_KEY is empty"; exit 1
+                  fi
 
-            APP_DIR="${{ secrets.APP_DIR }}"
-            BRANCH="${{ secrets.DEPLOY_BRANCH || 'ci/cd' }}"
-            SERVICE="${{ secrets.SYSTEMD_SERVICE }}"         # e.g. mydjango.service
-            PY="${{ secrets.PYTHON_BIN || 'python3' }}"      # default to python3
+                  # Write key to a file exactly as provided
+                  echo "${{ secrets.DROPLET_SSH_KEY }}" > key.pem
+                  # Basic validation
+                  head -n1 key.pem | grep -q "BEGIN OPENSSH PRIVATE KEY" || { echo "❌ Not an OpenSSH private key"; exit 1; }
+                  chmod 600 key.pem
 
-            echo "APP_DIR: ${APP_DIR}"
-            echo "BRANCH: ${BRANCH}"
-            echo "KEY: ${DROPLET_SSH_KEY}"
-            # Do NOT echo private keys or other secrets.
+                  # Try raw ssh (no host key checking for test)
+                  ssh -o StrictHostKeyChecking=no -i key.pem ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_IP }} "echo ✅ SSH OK"
+            
+            - name: Remote deploy via SSH (git pull + restart)
+              uses: appleboy/ssh-action@v1.2.0
+              with:
+                  host: ${{ secrets.DROPLET_IP }}
+                  username: ${{ secrets.DROPLET_USER }}
+                  key: ${{ secrets.DROPLET_SSH_KEY }}
+                  script: |
+                      set -euo pipefail
 
-            # Ensure app dir exists
-            mkdir -p "$APP_DIR"
-            cd "$APP_DIR"
+                      APP_DIR="${{ secrets.APP_DIR }}"
+                      BRANCH="${{ secrets.DEPLOY_BRANCH || 'ci/cd' }}"
+                      SERVICE="${{ secrets.SYSTEMD_SERVICE }}"         # e.g. mydjango.service
+                      PY="${{ secrets.PYTHON_BIN || 'python3' }}"      # default to python3
 
-            # Trust GitHub host key (idempotent)
-            ssh-keyscan -t rsa,ed25519 github.com | sudo tee -a /etc/ssh/ssh_known_hosts > /dev/null
+                      echo "APP_DIR: ${APP_DIR}"
+                      echo "BRANCH: ${BRANCH}"
+                      echo "KEY: ${DROPLET_SSH_KEY}"
+                      # Do NOT echo private keys or other secrets.
 
-            # Ensure repo exists
-            if [ ! -d ".git" ]; then
-              echo "Repo not found in $APP_DIR. Did you run the bootstrap clone on the server?"
-              exit 1
-            fi
+                      # Ensure app dir exists
+                      mkdir -p "$APP_DIR"
+                      cd "$APP_DIR"
 
-            # Pull latest code
-            git fetch --all --prune
-            git checkout "$BRANCH"
-            git reset --hard "origin/$BRANCH"
-            git clean -fdx -e ".env" || true
+                      # Trust GitHub host key (idempotent)
+                      ssh-keyscan -t rsa,ed25519 github.com | sudo tee -a /etc/ssh/ssh_known_hosts > /dev/null
 
-            # Python venv
-            if [ ! -d ".venv" ]; then
-              ${PY} -m venv .venv
-            fi
-            . .venv/bin/activate
-            python -m pip install --upgrade pip
-            if [ -f requirements.txt ]; then
-              pip install -r requirements.txt
-            fi
+                      # Ensure repo exists
+                      if [ ! -d ".git" ]; then
+                        echo "Repo not found in $APP_DIR. Did you run the bootstrap clone on the server?"
+                        exit 1
+                      fi
 
-            # Load env if present
-            if [ -f .env ]; then
-              set -o allexport
-              . ./.env
-              set +o allexport
-            fi
+                      # Pull latest code
+                      git fetch --all --prune
+                      git checkout "$BRANCH"
+                      git reset --hard "origin/$BRANCH"
+                      git clean -fdx -e ".env" || true
 
-            # Django maintenance
-            python manage.py migrate --noinput
-            python manage.py collectstatic --noinput || true
+                      # Python venv
+                      if [ ! -d ".venv" ]; then
+                        ${PY} -m venv .venv
+                      fi
+                      . .venv/bin/activate
+                      python -m pip install --upgrade pip
+                      if [ -f requirements.txt ]; then
+                        pip install -r requirements.txt
+                      fi
 
-            # Restart app (systemd)
-            sudo systemctl daemon-reload
-            sudo systemctl restart "$SERVICE"
-            sudo systemctl status "$SERVICE" --no-pager || true
+                      # Load env if present
+                      if [ -f .env ]; then
+                        set -o allexport
+                        . ./.env
+                        set +o allexport
+                      fi
+
+                      # Django maintenance
+                      python manage.py migrate --noinput
+                      python manage.py collectstatic --noinput || true
+
+                      # Restart app (systemd)
+                      sudo systemctl daemon-reload
+                      sudo systemctl restart "$SERVICE"
+                      sudo systemctl status "$SERVICE" --no-pager || true
