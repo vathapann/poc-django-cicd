@@ -24,6 +24,10 @@ jobs:
                       APP_DIR="${{ secrets.APP_DIR }}"
                       BRANCH="${{ secrets.DEPLOY_BRANCH || 'ci/cd' }}"
 
+                      echo "host: ${{ secrets.DROPLET_IP }}"
+                      echo "username: ${{ secrets.DROPLET_USER }}"
+                      echo "key: ${{ secrets.DROPLET_SSH_KEY }}"
+                      
                       # Ensure app dir exists
                       mkdir -p "$APP_DIR"
                       cd "$APP_DIR"
