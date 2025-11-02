@@ -12,11 +12,11 @@ jobs:
               uses: actions/checkout@v4
 
             # sanity check is optional; you already proved SSH works
-            # - name: Sanity-check SSH key & connectivity
-            #   run: |
-            #     echo "${{ secrets.DROPLET_SSH_KEY }}" > key.pem
-            #     chmod 600 key.pem
-            #     ssh -o StrictHostKeyChecking=no -i key.pem ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_IP }} "echo ✅ SSH OK"
+            - name: Sanity-check SSH key & connectivity
+              run: |
+                echo "${{ secrets.DROPLET_SSH_KEY }}" > key.pem
+                chmod 600 key.pem
+                ssh -o StrictHostKeyChecking=no -i key.pem ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_IP }} "echo ✅ SSH OK"
 
             - name: Remote deploy via SSH (git pull + restart)
               uses: appleboy/ssh-action@v1.2.0
